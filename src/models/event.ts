@@ -19,7 +19,7 @@ export class Event extends Model<
   declare status: EventStatus;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
-  declare version: number;
+  declare version: number | undefined;
 }
 
 export function initEvent(sequelize: Sequelize): void {

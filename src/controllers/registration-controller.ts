@@ -65,7 +65,7 @@ export async function registerForEvent(
       const created = await Registration.create({ eventId, userId: user.id }, { transaction });
       const [affected] = await Event.update(
         {
-          version: event.version + 1
+          version: (event.version || 0) + 1
         },
         {
           where: { id: eventId, version: event.version },
