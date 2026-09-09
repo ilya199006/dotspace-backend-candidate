@@ -19,6 +19,9 @@ export async function registerForEvent(
     const eventId = req.params.eventId as string;
     const { userId } = req.body as { userId?: string }
     const event = await Event.findByPk(eventId);
+    const regCount = await Registration.count({
+      where: { eventId },
+    });
     if (!event) {
       res.status(404).json({
         error: { code: 'EVENT_NOT_FOUND', message: 'Event was not found' },
@@ -29,6 +32,12 @@ export async function registerForEvent(
     if (!user) {
       res.status(404).json({
         error: { code: 'USER_NOT_FOUND', message: 'User was not found' },
+      });
+      return;
+    }
+    if (regCount >= event.capacity) {
+      res.status(409).json({
+        error: { code: 'EVENT_IS_FULL', message: 'There are no free places' },
       });
       return;
     }
@@ -52,34 +61,30 @@ export async function registerForEvent(
     // debugger
     // Оптимистичная блокировка c версионированием 
     // самый подходящий вариант для форм с регистрацией
-    await sequelize.transaction(async (transaction) => {
-      const transactionEvent = await Event.findByPk(eventId, { transaction });
-      if (event.version !== transactionEvent?.version) {
-        throw new Error('RegistrationBusy');
-      }
+    const registration = await sequelize.transaction(async (transaction) => {
       const created = await Registration.create({ eventId, userId: user.id }, { transaction });
       const [affected] = await Event.update(
         {
-          version: transactionEvent.version + 1
+          version: event.version + 1
         },
         {
-          where: { id: eventId, version: transactionEvent.version },
+          where: { id: eventId, version: event.version },
           transaction,
         },
       );
       if (affected === 0) {
         throw new Error('RegistrationBusy');
       }
-      return res.status(201).json({ registration: registrationJson(created) });
+      return created
     })
 
-
+    res.status(201).json({ registration: registrationJson(registration) });
   } catch (error: any) {
     // поскольку далее идет middleware c хендлером на ошибки (500-ая)
     // а в тз указано, что при race condition их не должно быть,
-    // будем повторять запросы через временные интервалы с эспоненциальным ростом
+    // будем повторять запросы через временные интервалы с экспоненциальным ростом
     // 100мс, 271мс, 738мс и тд
-    if (error.message == 'RegistrationBusy') {
+    if (error.message == 'RegistrationBusy' && Number(timeout) < 6) {
       req.body.timeout = (timeout || 0) + 1
       setTimeout(registerForEvent, Math.exp(timeout || 0) * 100, req, res, next)
     }
