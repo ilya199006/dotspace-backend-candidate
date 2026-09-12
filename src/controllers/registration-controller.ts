@@ -37,7 +37,7 @@ export async function registerForEvent(
     }
     if (regCount >= event.capacity) {
       res.status(409).json({
-        error: { code: 'EVENT_IS_FULL', message: 'There are no free places' },
+        error: { code: 'EVENT_FULL', message: 'There are no free places' },
       });
       return;
     }
@@ -84,7 +84,7 @@ export async function registerForEvent(
     // а в тз указано, что при race condition их не должно быть,
     // будем повторять запросы через временные интервалы с экспоненциальным ростом
     // 100мс, 271мс, 738мс и тд
-    if (error.message == 'RegistrationBusy' && Number(timeout) < 6) {
+    if (error.message == 'RegistrationBusy' && (timeout || 0) < 6) {
       req.body.timeout = (timeout || 0) + 1
       setTimeout(registerForEvent, Math.exp(timeout || 0) * 100, req, res, next)
     }

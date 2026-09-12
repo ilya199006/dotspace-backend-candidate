@@ -1,13 +1,14 @@
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { app } from '../src/app';
-import { Registration, sequelize } from '../src/models';
+import { Registration, sequelize, User } from '../src/models';
 import { migrateDatabase } from '../src/scripts/migrate';
 import {
   SEED_EVENT_IDS,
   seedDatabase,
   seedUserId,
 } from '../src/scripts/seed';
+import autocannon from 'autocannon'
 
 const UNKNOWN_ID = '00000000-0000-4000-8000-000000000999';
 
@@ -131,4 +132,56 @@ describe('registration API', () => {
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe('USER_NOT_FOUND');
   });
+  it('check concurrency thru autocannon', async () => {
+    let users = await User.findAll()
+    let userCounter = 0;
+
+    function setupClient(client: any) {
+      client.setBody(`{ "userId": "${users[userCounter]?.id}" }`)
+      if (userCounter < users.length - 1)
+        userCounter++
+    }
+    const port = Number(process.env.PORT ?? 3000);
+
+    async function start(): Promise<void> {
+      await sequelize.authenticate();
+
+      const server = app.listen(port, '0.0.0.0', () => {
+        console.log(`Event registration API is listening on port ${port}`);
+      });
+
+      const shutdown = () => {
+        server.close(() => {
+          void sequelize.close().finally(() => process.exit(0));
+        });
+      };
+
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+    }
+    await start()
+    const response = await autocannon({
+      url: `http://localhost:${port}`,
+      connections: 15,
+      duration: 10,
+      setupClient,
+      requests: [
+        {
+          method: 'POST',
+          path: `/events/${SEED_EVENT_IDS.main}/registrations`,
+          headers: {
+            'Content-type': 'application/json; charset=utf-8'
+          }
+        }
+      ],
+    })
+    expect(response.errors).toBe(0);
+    expect(response.timeouts).toBe(0);
+    expect(response['5xx']).toBe(0);
+    expect(response.statusCodeStats?.['201']?.count).toBe(
+      await Registration.count({ where: { eventId: SEED_EVENT_IDS.main } })
+    )
+    console.log(`autocannon: ${JSON.stringify(response.statusCodeStats)}`)
+    await Registration.destroy({ where: { eventId: SEED_EVENT_IDS.main } })
+  })
 });
